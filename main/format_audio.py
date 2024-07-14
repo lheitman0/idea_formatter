@@ -11,11 +11,74 @@ from pynput import keyboard
 import threading
 import queue
 from scipy.io import wavfile
+from rapidfuzz import fuzz
 
 # Initialize OpenAI client (you'll need to set your API key as an environment variable)
 client = openai.OpenAI()
 
 last_file = None
+session_dir = "audio_sessions"
+
+
+def extract_keyword(text):
+    prompt = f"""
+    Extract a single keyword that best represents the main subject of the following text. 
+    The keyword must be a simple, one-word term (e.g., history, reminders, meetings).
+    
+    Text: {text}
+    
+    Keyword:"""
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip().lower()
+
+
+def get_best_matching_directory(keyword):
+    directories = [d for d in os.listdir(session_dir) if os.path.isdir(os.path.join(session_dir, d))]
+    if not directories:
+        return keyword
+    
+    best_match = max(directories, key=lambda x: fuzz.ratio(keyword, x))
+    if fuzz.ratio(keyword, best_match) > 80:  # If similarity is over 80%
+        return best_match
+    return keyword
+
+
+def process_audio(continue_last=False):
+    global last_file
+    audio = record_audio()
+
+    print("Transcribing audio...")
+    raw_text = transcribe_audio(audio)
+
+    print("Formatting idea...")
+    formatted_idea = format_idea(raw_text)
+
+    keyword = extract_keyword(raw_text)
+    print(f"Extracted keyword: {keyword}")
+
+    directory = get_best_matching_directory(keyword)
+    directory_path = os.path.join(session_dir, directory)
+    os.makedirs(directory_path, exist_ok=True)
+
+    curr_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"note_{keyword}_{curr_date}.txt"
+    filepath = os.path.join(directory_path, filename)
+
+    if continue_last and last_file:
+        with open(last_file, "a") as f:
+            f.write(f"\nContinuation ({curr_date}):\n\n")
+            f.write(f"Raw Transcription:\n{raw_text}\n\n")
+            f.write(f"Formatted Idea:\n{formatted_idea}\n")
+        print(f"Continued note in {os.path.basename(last_file)}")
+    else:
+        with open(filepath, "w") as f:
+            f.write(f"Raw Transcription:\n{raw_text}\n\n")
+            f.write(f"Formatted Idea:\n{formatted_idea}\n")
+        last_file = filepath
+        print(f"New note saved as {filename} in directory {directory}")
 
 
 def on_press(key):
@@ -93,40 +156,40 @@ def format_idea(text):
     return response.choices[0].message.content
 
 
-def process_audio(continue_last=False):
-    global last_file
-    audio = record_audio()
+# def process_audio(continue_last=False):
+#     global last_file
+#     audio = record_audio()
 
-    print("Transcribing audio...")
-    raw_text = transcribe_audio(audio)
+#     print("Transcribing audio...")
+#     raw_text = transcribe_audio(audio)
 
-    print("Formatting idea...")
-    formatted_idea = format_idea(raw_text)
+#     print("Formatting idea...")
+#     formatted_idea = format_idea(raw_text)
 
-    # Save to file
-    session_dir = "audio_sessions"
-    os.makedirs(session_dir, exist_ok=True)
+#     # Save to file
+#     session_dir = "audio_sessions"
+#     os.makedirs(session_dir, exist_ok=True)
 
-    if continue_last and last_file:
-        filepath = last_file
-        mode = "a"  # append mode
-        print(f"Continuing last note in {os.path.basename(filepath)}")
-    else:
-        curr_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"idea_{curr_date}.txt"
-        filepath = os.path.join(session_dir, filename)
-        mode = "w"  # write mode
-        print(f"Creating new note: {filename}")
+#     if continue_last and last_file:
+#         filepath = last_file
+#         mode = "a"  # append mode
+#         print(f"Continuing last note in {os.path.basename(filepath)}")
+#     else:
+#         curr_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+#         filename = f"idea_{curr_date}.txt"
+#         filepath = os.path.join(session_dir, filename)
+#         mode = "w"  # write mode
+#         print(f"Creating new note: {filename}")
 
-    with open(filepath, mode) as f:
-        f.write(f"{'Continuation:' if continue_last else 'New Entry:'}\n\n")
-        f.write(f"Raw Transcription:\n{raw_text}\n\n")
-        f.write(f"Formatted Idea:\n{formatted_idea}\n")
+#     with open(filepath, mode) as f:
+#         f.write(f"{'Continuation:' if continue_last else 'New Entry:'}\n\n")
+#         f.write(f"Raw Transcription:\n{raw_text}\n\n")
+#         f.write(f"Formatted Idea:\n{formatted_idea}\n")
 
-    last_file = filepath
-    print(
-        f"Idea {'appended to' if continue_last else 'saved in'} {os.path.basename(filepath)}"
-    )
+#     last_file = filepath
+#     print(
+#         f"Idea {'appended to' if continue_last else 'saved in'} {os.path.basename(filepath)}"
+#     )
 
 
 def clear_input_buffer():
@@ -148,6 +211,27 @@ def clear_input_buffer():
     finally:
         # Restore the original attributes
         fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+
+
+# def main():
+#     global last_file
+#     while True:
+#         clear_input_buffer()
+#         user_input = input(
+#             "Press Enter to start recording, 'C' to continue last note, or 'Q' to quit: "
+#         ).lower()
+#         if user_input == "q":
+#             break
+#         elif user_input == "c":
+#             if last_file:
+#                 process_audio(continue_last=True)
+#             else:
+#                 print("No previous note to continue. Starting a new recording.")
+#                 process_audio()
+#         else:
+#             process_audio()
+#         print("Waiting for next command...")
+#         time.sleep(1)  # Add a small delay
 
 
 def main():

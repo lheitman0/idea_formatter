@@ -1,0 +1,26 @@
+
+
+Continuation:
+Raw text:
+Testing new continue feature. This is note one.
+
+Formatted idea:
+Main Idea: 
+Testing new continue feature for improved user experience.
+
+Key Points:
+- Implementing a "continue" button on a webpage to allow users to easily pick up where they left off
+- Enhancing user engagement and reducing friction in navigation
+- Conducting A/B testing to measure the impact on user interaction and retention rates
+
+Continuation:
+Raw text:
+Continuing on the last note, seeing if this works.
+
+Formatted idea:
+Main Idea: Testing the effectiveness of a solution previously discussed.
+
+Key Points:
+- Gathering data to evaluate the solution's impact
+- Implementing necessary adjustments based on outcomes
+- Iterating on the solution until desired results are achieved

@@ -1,81 +1,175 @@
 import openai
 import sounddevice as sd
 import numpy as np
-import wave
+import termios
+import fcntl
 import os
+import time
+import sys
 from datetime import datetime
+from pynput import keyboard
+import threading
+import queue
+from scipy.io import wavfile
 
 # Initialize OpenAI client (you'll need to set your API key as an environment variable)
 client = openai.OpenAI()
 
-def record_audio(duration=10, sample_rate=44100):
-    print("Recording...")
-    audio = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1)
-    sd.wait()
-    print("Recording finished")
-    return audio
+last_file = None
 
-def save_audio(audio, filename, sample_rate=44100):
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes((audio * 32767).astype(np.int16).tobytes())
 
-def transcribe_audio(audio_file):
-    with open(audio_file, "rb") as file:
+def on_press(key):
+    global should_stop
+    if key == keyboard.Key.enter:
+        should_stop = True
+        return False  # Stop listener
+
+
+def record_audio():
+    global should_stop
+    should_stop = False
+    sample_rate = 44100
+    q = queue.Queue()
+
+    def callback(indata, frames, time, status):
+        if status:
+            print(status)
+        q.put(indata.copy())
+
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+
+    with sd.InputStream(samplerate=sample_rate, channels=1, callback=callback):
+        print("Recording... Press Enter to stop.")
+        while not should_stop:
+            sd.sleep(100)
+
+    listener.join()
+    print("Recording stopped.")
+
+    audio_data = []
+    while not q.empty():
+        audio_data.append(q.get())
+
+    return np.concatenate(audio_data)
+
+
+def transcribe_audio(audio):
+    temp_file = "temp_audio.wav"
+    wavfile.write(temp_file, 44100, audio)
+
+    with open(temp_file, "rb") as file:
         transcription = client.audio.transcriptions.create(model="whisper-1", file=file)
+
+    os.remove(temp_file)
     return transcription.text
+
 
 def format_idea(text):
     prompt = f"""
-    Format the following idea into a structured format:
-    1. Main Idea (1 sentence summary)
-    2. Key Points (bullet points)
-    3. Additional Notes (if any)
+    Please format the following transcribed audio into a clear, readable structure:
+    1. Clean up the text, fixing any grammatical errors and filling in obvious missing words.
+    2. Organize the main points into a bullet-point list.
+    3. Provide a brief summary (2-3 sentences) of the entire idea at the end.
+    4. Do not add a second main point if 1 is sufficient.
 
-    Idea: {text}
+    Original transcription: {text}
+
+    Format your response as follows:
+    Cleaned Text:
+    [Insert cleaned and grammatically correct version of the full text here]
+
+    Main Points:
+    • [Main point 1]
+    • [Main point 2]
+    • [...]
+
+    Summary:
+    [Insert 2-3 sentence summary here]
     """
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
+        model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
 
-def process_audio():
-    # Create a new directory for this session
-    session_dir = "audio_session"
-    os.makedirs(session_dir, exist_ok=True)
 
-    # Record audio
+def process_audio(continue_last=False):
+    global last_file
     audio = record_audio()
 
-    # Save audio file
-    audio_file = os.path.join(session_dir, "recorded_audio.wav")
-    save_audio(audio, audio_file)
+    print("Transcribing audio...")
+    raw_text = transcribe_audio(audio)
 
-    # Transcribe audio
-    raw_text = transcribe_audio(audio_file)
-    print("\nRaw text:")
-    print(raw_text)
-
-    # Format idea
+    print("Formatting idea...")
     formatted_idea = format_idea(raw_text)
-    print("\nFormatted idea:")
-    print(formatted_idea)
 
     # Save to file
-    with open(os.path.join(session_dir, f"idea_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"), "w") as f:
-        f.write(f"Raw text:\n{raw_text}\n\nFormatted idea:\n{formatted_idea}")
+    session_dir = "audio_sessions"
+    os.makedirs(session_dir, exist_ok=True)
 
-    print(f"\nIdea saved in {session_dir}/idea.txt")
+    if continue_last and last_file:
+        filepath = last_file
+        mode = "a"  # append mode
+        print(f"Continuing last note in {os.path.basename(filepath)}")
+    else:
+        curr_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"idea_{curr_date}.txt"
+        filepath = os.path.join(session_dir, filename)
+        mode = "w"  # write mode
+        print(f"Creating new note: {filename}")
+
+    with open(filepath, mode) as f:
+        f.write(f"{'Continuation:' if continue_last else 'New Entry:'}\n\n")
+        f.write(f"Raw Transcription:\n{raw_text}\n\n")
+        f.write(f"Formatted Idea:\n{formatted_idea}\n")
+
+    last_file = filepath
+    print(
+        f"Idea {'appended to' if continue_last else 'saved in'} {os.path.basename(filepath)}"
+    )
+
+
+def clear_input_buffer():
+    # Get the file descriptor of standard input (stdin)
+    fd = sys.stdin.fileno()
+
+    # Get the current attributes of the file descriptor
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+
+    # Temporarily set it to non-blocking
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    try:
+        # Read and discard all available input
+        while sys.stdin.read(1):
+            pass
+    except IOError:
+        pass
+    finally:
+        # Restore the original attributes
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+
 
 def main():
+    global last_file
     while True:
-        user_input = input("Press Enter to start recording an idea (or 'q' to quit): ")
-        if user_input.lower() == 'q':
+        clear_input_buffer()
+        user_input = input(
+            "Press Enter to start recording, 'C' to continue last note, or 'Q' to quit: "
+        ).lower()
+        if user_input == "q":
             break
-        process_audio()
+        elif user_input == "c":
+            if last_file:
+                process_audio(continue_last=True)
+            else:
+                print("No previous note to continue. Starting a new recording.")
+                process_audio()
+        else:
+            process_audio()
+        print("Waiting for next command...")
+        time.sleep(1)  # Add a small delay
+
 
 if __name__ == "__main__":
     main()

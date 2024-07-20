@@ -400,21 +400,22 @@ import json
 # Initialize OpenAI client (you'll need to set your API key as an environment variable)
 client = openai.OpenAI()
 
+desktop_path = os.path.expanduser("~/Desktop")
+notes_dir = os.path.join(desktop_path, "notes")
+tag_index_file = os.path.join(notes_dir, "tag_index.json")
 last_file = None
-session_dir = "audio_sessions"
-tag_index_file = "tag_index.json"
 
 
 def get_existing_categories():
     return [
         d
-        for d in os.listdir(session_dir)
-        if os.path.isdir(os.path.join(session_dir, d))
+        for d in os.listdir(notes_dir)
+        if os.path.isdir(os.path.join(notes_dir, d))
     ]
 
 
 def add_new_category(category):
-    category_path = os.path.join(session_dir, category)
+    category_path = os.path.join(notes_dir, category)
     os.makedirs(category_path, exist_ok=True)
     print(f"New category created: {category}")
 
@@ -563,7 +564,7 @@ def process_audio(continue_last=False):
 
     curr_date = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"note_{main_tag}_{curr_date}.txt"
-    filepath = os.path.join(session_dir, category, filename)
+    filepath = os.path.join(notes_dir, category, filename)
 
     if continue_last and last_file:
         with open(last_file, "a") as f:
@@ -633,7 +634,7 @@ def search_notes(query, category=None):
     if results:
         print("Search results:")
         for filepath in results:
-            print(f"- {os.path.relpath(filepath, session_dir)}")
+            print(f"- {os.path.relpath(filepath, notes_dir)}")
     else:
         print("No matching notes found.")
 
@@ -647,7 +648,7 @@ def display_categories():
 
 def main():
     global last_file
-    os.makedirs(session_dir, exist_ok=True)
+    os.makedirs(notes_dir, exist_ok=True)
 
     while True:
         display_categories()
